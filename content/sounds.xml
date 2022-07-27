@@ -1,0 +1,5 @@
+<sounds root="sounds/">
+	<sound name="Nightmare Begin">
+		<sample weight="1" path="nightmare_begin.wav"/>
+	</sound>
+</sounds>
