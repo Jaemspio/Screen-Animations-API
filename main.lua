@@ -5,6 +5,7 @@ local game = Game()
 local sound = SFXManager()
 local music = MusicManager()
 local xmlData = include("xml_data")
+local nullVector = Vector(0, 0)
 local nightmare = Isaac.GetSoundIdByName("Nightmare Begin")
 include("screen_enums")
 if debug then include("scripts/xml_reader") end
@@ -23,15 +24,43 @@ local CustomSpr = Sprite()
 CustomSpr.PlaybackSpeed = 0.5
 local Fade = Sprite()
 Fade:Load("gfx/fade.anm2", true)
+local CutsceneBack = Sprite()
+CutsceneBack:Load("gfx/ui/cutscene/background.anm2", true)
+CutsceneBack.PlaybackSpeed = 0.5
+local CutsceneStr = Sprite()
+CutsceneStr.PlaybackSpeed = 0.5
+local CreditsSpr = Sprite()
+CreditsSpr:Load("gfx/cutscenes/credits.anm2", true)
+CreditsSpr.PlaybackSpeed = 0.5
 
 local function GetScreenSize() -- By Kilburn himself.
-    local room = game:GetRoom()
-    local pos = Isaac.WorldToScreen(Vector(0,0)) - room:GetRenderScrollOffset() - game.ScreenShakeOffset
-    
-    local rx = pos.X + 60 * 26 / 40
-    local ry = pos.Y + 140 * (26 / 40)
-    
-    return rx*2 + 13*26, ry*2 + 7*26
+  local room = game:GetRoom()
+  local pos = Isaac.WorldToScreen(Vector(0, 0)) - room:GetRenderScrollOffset() - game.ScreenShakeOffset
+  local rx = pos.X + 60 * 26 / 40
+  local ry = pos.Y + 140 * (26 / 40)
+  return rx * 2 + 13 * 26, ry * 2 + 7 * 26
+end
+
+local function doesSoundExist(id)
+  local sfx = SFXManager()
+  local ret = false
+  sfx:Play(id)
+  if sfx:IsPlaying(id) then ret = true end
+  sfx:Stop(id)
+  return ret
+end
+
+local function getMaxSoundID()
+  local id = SoundEffect.NUM_SOUND_EFFECTS - 1
+  local step = 32
+  while step > 0 do
+	if doesSoundExist(id + step) then
+	  id = id + step
+	else
+	  step = step // 2
+	end
+  end
+  return id
 end
 
 local function blacklist(entity)
@@ -108,9 +137,13 @@ rawset(Isaac, "GetAchievementIdByName", function(name)
   return -1
 end)
 
+function ScreenAPI.IsPlaying()
+  return #Queue ~= 0 and not IsGamePaused()
+end
+
 --End of Compatibility
 
-function ScreenAPI.PlayGiantbook(id, player, config, animName)
+function ScreenAPI.PlayGiantbook(id, animName, player, config)
   if type(id) == "number" then
 	if xmlData.Giantbooks[id] then
 	  local book = xmlData.Giantbooks[id]
@@ -120,7 +153,7 @@ function ScreenAPI.PlayGiantbook(id, player, config, animName)
 	end
   elseif type(id) == "string" then
 	table.insert(Queue, {GfxRoot = id, Anm2 = "gfx/ui/giantbook/giantbook.anm2", Anim = animName or "Appear", Type = "Giantbook"})
-	if player and config then
+	if player and player:ToPlayer() and config then
 	  player:GetData().GiantToAnimate = config
 	end
   else
@@ -143,7 +176,7 @@ function ScreenAPI.PlayAchievement(id, duration)
   end
 end
 
-function ScreenAPI.PlayNightmare(id, canSkip, frame)
+function ScreenAPI.PlayNightmare(id, canSkip)
   if canSkip == nil then canSkip = true end
   if type(id) == "number" then
 	if xmlData.Nightmares[id] then
@@ -153,14 +186,29 @@ function ScreenAPI.PlayNightmare(id, canSkip, frame)
 	  error("[Error] Invaild id: "..(id), 2)
 	end
   elseif type(id) == "string" then
-	table.insert(Queue, {Anm2 = id, Skip = canSkip, Frame = frame, Type = "Nightmare"})
+	local dummy = Sprite()
+	dummy:Load(id, true)
+	dummy:SetFrame(dummy:GetDefaultAnimation(), 999999)
+	table.insert(Queue, {Anm2 = id, Skip = canSkip, Frame = dummy:GetFrame(), Type = "Nightmare"})
+  else
+	error("[Error] Attempted to index an invaild type: "..type(id), 2)
+  end
+end
+
+function ScreenAPI.PlayCutscene(anm2, sound, canSkip, credits, headShadow)
+  if type(anm2) == "string" then
+	Queue = {} --Empty the queue to give cutscenes priority
+	local dummy = Sprite()
+	dummy:Load(anm2, true)
+	dummy:SetFrame(dummy:GetDefaultAnimation(), 999999)
+	table.insert(Queue, {Anm2 = anm2, Frame = dummy:GetFrame() or 0, Sound = sound or 0, Skip = canSkip or true, Credits = credits or true, Shadow = headShadow or true, Type = "Cutscene"})
   else
 	error("[Error] Attempted to index an invaild type: "..type(id), 2)
   end
 end
 
 function ScreenAPI.PlayCustomAnimation(anm2, anim, duration)
-  if not anm2 then return end
+  if not anm2 or type(anm2) ~= "string" then return end
   local dummy = Sprite()
   dummy:Load(anm2, true)
   table.insert(Queue, {Anm2 = anm2, Anim = anim or dummy:GetDefaultAnimation(), Duration = duration, Type = "Custom"})
@@ -435,7 +483,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		  if not data.GiantbookAPIControls then
 			data.GiantbookAPIControls = player.Velocity
 			player.ControlsEnabled = false
-			player.Velocity = Vector.Zero
+			player.Velocity = nullVector
 		  end
 		end
 	  end
@@ -466,7 +514,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		return
 	  end
 	  local CenterX, CenterY = GetScreenSize()
-	  GiantbookAnim:Render(Vector(CenterX / 2, CenterY / 2), Vector.Zero, Vector.Zero)
+	  GiantbookAnim:Render(Vector(CenterX / 2, CenterY / 2), nullVector, nullVector)
 	  GiantbookAnim:Update()
 	end
   elseif (shaderName == 'ScreenAPIShader') and Queue[1] and Queue[1].Type == "Achievement" then
@@ -487,7 +535,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		  if not data.GiantbookAPIControls then
 			data.GiantbookAPIControls = player.Velocity
 			player.ControlsEnabled = false
-			player.Velocity = Vector.Zero
+			player.Velocity = nullVector
 		  end
 		end
 	  end
@@ -528,7 +576,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		return nil
 	  end
 	local CenterX, CenterY = GetScreenSize()
-	AchievementSpr:Render(Vector(CenterX / 2, CenterY / 2), Vector.Zero, Vector.Zero)
+	AchievementSpr:Render(Vector(CenterX / 2, CenterY / 2), nullVector, nullVector)
 	AchievementSpr:Update()
 	end
   elseif (shaderName == 'ScreenAPIShader') and Queue[1] and Queue[1].Type == "Nightmare" then
@@ -556,6 +604,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		  FreezeGame(true)
 		  music:Enable()
 		  sound:Stop(nightmare)
+		  game:Fadein(0.04)
 		end
 	  end
 	  FreezeGame()
@@ -578,7 +627,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		  if not data.GiantbookAPIControls then
 			data.GiantbookAPIControls = player.Velocity
 			player.ControlsEnabled = false
-			player.Velocity = Vector.Zero
+			player.Velocity = nullVector
 		  end
 		end
 	  end
@@ -594,7 +643,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 	  if Fade:IsFinished("In") and Queue[1].Fading then
 		Queue[1].Faded = true
 	  end
-	  for p = 0, Game():GetNumPlayers() - 1 do
+	  for p = 0, game:GetNumPlayers() - 1 do
 		local player = Isaac.GetPlayer(p)
 		if Queue[1].Skip and Input.IsActionTriggered(ButtonAction.ACTION_MENUCONFIRM, player.ControllerIndex) then
 		  endNightmare()
@@ -606,14 +655,14 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		return
 	  end
 	  local CenterX, CenterY = GetScreenSize()
-	  BackgroundSpr:Render(Vector(CenterX / 2, CenterY / 2), Vector.Zero, Vector.Zero)
+	  BackgroundSpr:Render(Vector(CenterX / 2, CenterY / 2), nullVector, nullVector)
 	  BackgroundSpr:Update()
 	  if Queue[1].Ready then
-		NightmareSpr:Render(Vector(CenterX / 2, CenterY / 2), Vector.Zero, Vector.Zero)
+		NightmareSpr:Render(Vector(CenterX / 2, CenterY / 2), nullVector, nullVector)
 		NightmareSpr:Update()
 	  end
 	  if Queue[1].Fading then
-		Fade:Render(Vector(CenterX / 2, CenterY / 2), Vector.Zero, Vector.Zero)
+		Fade:Render(Vector(CenterX / 2, CenterY / 2), nullVector, nullVector)
 		Fade:Update()
 	  end
 	end
@@ -638,7 +687,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		  if not data.GiantbookAPIControls then
 			data.GiantbookAPIControls = player.Velocity
 			player.ControlsEnabled = false
-			player.Velocity = Vector.Zero
+			player.Velocity = nullVector
 		  end
 		end
 	  end
@@ -646,10 +695,6 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		CustomSpr:Play(Queue[1].Anim, true)
 		frame = game:GetFrameCount()
 		Queue[1].Appear = true
-		if Queue[1].GfxRoot then
-		  CustomSpr:ReplaceSpritesheet(0, Queue[1].GfxRoot)
-		  CustomSpr:LoadGraphics()
-		end
 	  end
 	  if (not Queue[1].Duration and CustomSpr:IsFinished(Queue[1].Anim)) or (Queue[1].Duration and Queue[1].Duration + frame == game:GetFrameCount()) then
 		table.remove(Queue, 1)
@@ -670,8 +715,98 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		return
 	  end
 	  local CenterX, CenterY = GetScreenSize()
-	  CustomSpr:Render(Vector(CenterX / 2, CenterY / 2), Vector.Zero, Vector.Zero)
+	  CustomSpr:Render(Vector(CenterX / 2, CenterY / 2), nullVector, nullVector)
 	  CustomSpr:Update()
+	end
+  elseif (shaderName == 'ScreenAPIShader') and Queue[1] and Queue[1].Type == "Cutscene" then
+	if not IsGamePaused() or Queue[1].Started then
+	  if (ModConfigMenu and ModConfigMenu.IsVisible) then
+		ModConfigMenu.CloseConfigMenu()
+	  end
+	  if (DeadSeaScrollsMenu and DeadSeaScrollsMenu.OpenedMenu) then
+		DeadSeaScrollsMenu:CloseMenu(true, true)
+	  end
+	  FreezeGame()
+	  Queue[1].Started = true
+	  music:Pause()
+	  for i = 1, getMaxSoundID() do
+		if i ~= Queue[1].Sound and sound:IsPlaying(i) then
+		  sound:Stop(i)
+		end
+	  end
+	  local function preEndGame()
+		game:FinishChallenge()
+		for i = 1, 10 do --Force 10 game updates to speed up the animation
+		  game:Update()
+		end
+	  end
+	  local function endGame()
+		sound:Stop(Queue[1].Sound)
+		Queue = {}
+		loaded = false
+		if (not Queue[1]) and OverrideControls then
+		  OverrideControls = false
+		  for p = 0, game:GetNumPlayers() - 1 do
+			local player = Isaac.GetPlayer(p)
+			local data = player:GetData()
+			if data.GiantbookAPIControls then
+			  player.ControlsEnabled = true
+			  player.Velocity = data.GiantbookAPIControls
+			  data.GiantbookAPIControls = nil
+			end
+		  end
+		  FreezeGame(true)
+		end
+	  end
+	  if not loaded then
+		loaded = true
+		CutsceneStr:Load(Queue[1].Anm2, true)
+	  end
+	  if not OverrideControls then
+		OverrideControls = true
+		for p = 0, game:GetNumPlayers() - 1 do
+		  local player = Isaac.GetPlayer(p)
+		  local data = player:GetData()
+		  if not data.GiantbookAPIControls then
+			data.GiantbookAPIControls = player.Velocity
+			player.ControlsEnabled = false
+			player.Velocity = nullVector
+		  end
+		end
+	  end
+	  if not Queue[1].Appear then
+		CutsceneStr:Play(CutsceneStr:GetDefaultAnimation(), true)
+		Queue[1].Appear = true
+		sound:Play(Queue[1].Sound, 2)
+	  end
+	  local t = 29
+	  for p = 0, game:GetNumPlayers() - 1 do
+		local player = Isaac.GetPlayer(p)
+		if Queue[1].Skip and Input.IsActionTriggered(ButtonAction.ACTION_MENUCONFIRM, player.ControllerIndex) then
+		  Queue[1].EndTimer = t
+		  preEndGame()
+		end
+	  end
+	  if not Queue[1].EndTimer and Queue[1].Frame and CutsceneStr:GetFrame() + 30 >= Queue[1].Frame then
+		Queue[1].EndTimer = t
+		preEndGame()
+	  end
+	  if Queue[1].EndTimer and Queue[1].EndTimer >= 0 then
+		Queue[1].EndTimer = Queue[1].EndTimer - 1
+	  end
+	  if Queue[1].EndTimer and Queue[1].EndTimer == 0 then
+		endGame()
+		return
+	  end
+	  local RenderX, RenderY = GetScreenSize()
+	  if Queue[1].Shadow then
+		CutsceneBack:SetFrame("Scene", 1)
+	  else
+		CutsceneBack:SetFrame("Scene", 2)
+	  end
+	  CutsceneBack:Render(Vector(RenderX / 2, RenderY / 2), nullVector, nullVector)
+	  CutsceneStr:Render(Vector(RenderX / 2, RenderY / 2), nullVector, nullVector)
+	  CutsceneStr:Update()
 	end
   end
 end)
