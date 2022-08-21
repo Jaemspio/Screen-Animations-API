@@ -75,6 +75,7 @@ local isPaused = false
 local OverrideControls = false
 local IsGamePaused
 local loaded = false
+local maxSound = getMaxSoundID()
 
 local function FreezeGame(unfreeze)
   if unfreeze then
@@ -196,12 +197,15 @@ function ScreenAPI.PlayNightmare(id, canSkip)
 end
 
 function ScreenAPI.PlayCutscene(anm2, sound, canSkip, credits, headShadow)
+  if canSkip == nil then canSkip = true end
+  if credits == nil then credits = true end
+  if headShadow == nil then headShadow = true end
   if type(anm2) == "string" then
 	Queue = {} --Empty the queue to give cutscenes priority
 	local dummy = Sprite()
 	dummy:Load(anm2, true)
 	dummy:SetFrame(dummy:GetDefaultAnimation(), 999999)
-	table.insert(Queue, {Anm2 = anm2, Frame = dummy:GetFrame() or 0, Sound = sound or 0, Skip = canSkip or true, Credits = credits or true, Shadow = headShadow or true, Type = "Cutscene"})
+	table.insert(Queue, {Anm2 = anm2, Frame = dummy:GetFrame() or 0, Sound = sound or 0, Skip = canSkip, Credits = credits, Shadow = headShadow, Type = "Cutscene"})
   else
 	error("[Error] Attempted to index an invaild type: "..type(id), 2)
   end
@@ -460,6 +464,7 @@ ScreenAPI:AddCallback(ModCallbacks.MC_POST_PLAYER_UPDATE, function()
 end)
 
 local frame = 0
+local isUpdating = false
 
 ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
   if (shaderName == 'ScreenAPIShader') and Queue[1] and Queue[1].Type == "Giantbook" then
@@ -729,18 +734,21 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 	  FreezeGame()
 	  Queue[1].Started = true
 	  music:Pause()
-	  for i = 1, getMaxSoundID() do
+	  for i = 1, maxSound do
 		if i ~= Queue[1].Sound and sound:IsPlaying(i) then
 		  sound:Stop(i)
 		end
 	  end
 	  local function preEndGame()
 		game:FinishChallenge()
+		isUpdating = true
 		for i = 1, 10 do --Force 10 game updates to speed up the animation
 		  game:Update()
 		end
+		isUpdating = false
 	  end
 	  local function endGame()
+		game:GetSeeds():AddSeedEffect(SeedEffect.SEED_PREVENT_ALL_CURSES) --Disables achievements
 		sound:Stop(Queue[1].Sound)
 		Queue = {}
 		loaded = false
@@ -788,8 +796,15 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 		end
 	  end
 	  if not Queue[1].EndTimer and Queue[1].Frame and CutsceneStr:GetFrame() + 30 >= Queue[1].Frame then
-		Queue[1].EndTimer = t
-		preEndGame()
+		if Queue[1].Credits then
+		  Queue[1].EndTimer = 10
+		  preEndGame()
+		  game:GetSeeds():AddSeedEffect(SeedEffect.SEED_PREVENT_ALL_CURSES) --Disables achievements
+		  game:End(3)
+		else
+		  Queue[1].EndTimer = t
+		  preEndGame()
+		end
 	  end
 	  if Queue[1].EndTimer and Queue[1].EndTimer >= 0 then
 		Queue[1].EndTimer = Queue[1].EndTimer - 1
@@ -806,7 +821,9 @@ ScreenAPI:AddCallback(ModCallbacks.MC_GET_SHADER_PARAMS, function(_, shaderName)
 	  end
 	  CutsceneBack:Render(Vector(RenderX / 2, RenderY / 2), nullVector, nullVector)
 	  CutsceneStr:Render(Vector(RenderX / 2, RenderY / 2), nullVector, nullVector)
-	  CutsceneStr:Update()
+	  if not isUpdating then
+		CutsceneStr:Update()
+	  end
 	end
   end
 end)
